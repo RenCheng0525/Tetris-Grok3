@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tetris - HATETRIS</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background-color: #f0f0f0;
+            font-family: Arial, sans-serif;
+        }
+        #game-container {
+            display: flex;
+            align-items: flex-start;
+            flex-wrap: wrap;
+            justify-content: center;
+            max-width: 100%;
+            padding: 10px;
+        }
+        #tetris { 
+            border: 1px solid black; 
+        }
+        #preview-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-left: 15px;
+        }
+        #preview { 
+            border: 1px solid black; 
+        }
+        #score, #mode { 
+            margin-top: 10px; 
+        }
+        #auto-play {
+            margin-top: 10px;
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        #control-buttons {
+            margin-top: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        .button-row {
+            display: flex;
+            gap: 10px;
+        }
+        #control-buttons button {
+            padding: 10px;
+            font-size: 20px;
+            cursor: pointer;
+            border: 1px solid #ccc;
+            background-color: #fff;
+            border-radius: 5px;
+            width: 50px; /* Fixed width for consistency */
+        }
+        @media (max-width: 600px) {
+            #game-container { 
+                flex-direction: column; 
+                align-items: center; 
+            }
+            #preview-container { 
+                margin-left: 0; 
+                margin-top: 10px; 
+            }
+            #tetris { 
+                width: 300px; 
+                height: 500px; 
+            }
+            #preview { 
+                width: 125px; 
+                height: 125px; 
+            }
+            #auto-play {
+                padding: 15px 30px; /* Larger padding for easier tapping */
+                font-size: 18px;
+                width: 120px; /* Fixed width */
+            }
+            #control-buttons {
+                gap: 10px; /* More space between rows */
+            }
+            #control-buttons button {
+                padding: 15px; /* Larger padding for easier tapping */
+                font-size: 24px; /* Larger emoji */
+                width: 60px; /* Larger width */
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="tetris" width="360" height="600"></canvas>
+        <div id="preview-container">
+            <canvas id="preview" width="150" height="150"></canvas>
+            <div id="score">Score: 0</div>
+            <div id="mode">Mode: Manual</div>
+            <button id="auto-play">Auto Play</button>
+            <div id="control-buttons">
+                <div class="button-row">
+                    <button id="move-left">⬅️</button>
+                    <button id="move-right">➡️</button>
+                </div>
+                <div class="button-row">
+                    <button id="move-down">⬇️</button>
+                    <button id="rotate">↻</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('tetris');
+        const context = canvas.getContext('2d');
+        const previewCanvas = document.getElementById('preview');
+        const previewContext = previewCanvas.getContext('2d');
+        const scoreDisplay = document.getElementById('score');
+        const modeDisplay = document.getElementById('mode');
+        const autoPlayButton = document.getElementById('auto-play');
+        const moveLeftButton = document.getElementById('move-left');
+        const moveRightButton = document.getElementById('move-right');
+        const moveDownButton = document.getElementById('move-down');
+        const rotateButton = document.getElementById('rotate');
+
+        const gridSize = 30;
+        const rows = canvas.height / gridSize;
+        const cols = canvas.width / gridSize;
+
+        let board = Array(rows).fill().map(() => Array(cols).fill(0));
+        const tetrominoes = [
+            [[1,1,1,1]], // I
+            [[1,1],[1,1]], // O
+            [[0,1,0],[1,1,1]], // T
+            [[0,1,1],[1,1,0]], // S
+            [[1,1,0],[0,1,1]], // Z
+            [[1,0,0],[1,1,1]], // J
+            [[0,0,1],[1,1,1]]  // L
+        ];
+
+        let currentPiece;
+        let nextPiece;
+        let lastPieceIndex = -1;
+        let dropCounter = 0;
+        let dropInterval = 1000;
+        let lastTime = 0;
+        let gameOver = false;
+        let score = 0;
+        let aiMode = false;
+        let aiMoveCounter = 0;
+        let aiStep = 'rotate'; // AI steps: rotate -> move -> drop
+        let usedHatetrisLast = false; // Track if HATETRIS was used last time
+
+        // Generate a bright, distinct color
+        function generateBrightColor() {
+            const minBrightness = 128; // Ensure color isn’t too dark
+            const r = Math.floor(Math.random() * (255 - minBrightness) + minBrightness);
+            const g = Math.floor(Math.random() * (255 - minBrightness) + minBrightness);
+            const b = Math.floor(Math.random() * (255 - minBrightness) + minBrightness);
+            return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+        }
+
+        // Draw a single square on the canvas
+        function drawSquare(x, y, color, ctx) {
+            ctx.fillStyle = color;
+            ctx.fillRect(x * gridSize, y * gridSize, gridSize - 1, gridSize - 1);
+        }
+
+        // Render the game state
+        function draw() {
+            context.fillStyle = '#000';
+            context.fillRect(0, 0, canvas.width, canvas.height);
+
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    if (board[r][c]) {
+                        drawSquare(c, r, board[r][c], context);
+                    }
+                }
+            }
+
+            if (currentPiece) {
+                currentPiece.shape.forEach((row, dy) => {
+                    row.forEach((value, dx) => {
+                        if (value) {
+                            drawSquare(currentPiece.x + dx, currentPiece.y + dy, currentPiece.color, context);
+                        }
+                    });
+                });
+            }
+
+            if (gameOver) {
+                context.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                context.fillRect(0, 0, canvas.width, canvas.height);
+                context.fillStyle = 'white';
+                context.font = '30px Arial';
+                context.fillText('Game Over', canvas.width / 2 - 60, canvas.height / 2);
+            }
+
+            // Draw preview with centered tetromino
+            previewContext.fillStyle = '#000';
+            previewContext.fillRect(0, 0, previewCanvas.width, previewCanvas.height);
+            if (nextPiece) {
+                const shapeWidth = nextPiece.shape[0].length;
+                const shapeHeight = nextPiece.shape.length;
+                const offsetX = Math.floor((5 - shapeWidth) / 2); // Center horizontally (5 grids total)
+                const offsetY = Math.floor((5 - shapeHeight) / 2); // Center vertically (5 grids total)
+                nextPiece.shape.forEach((row, dy) => {
+                    row.forEach((value, dx) => {
+                        if (value) {
+                            drawSquare(dx + offsetX, dy + offsetY, nextPiece.color, previewContext);
+                        }
+                    });
+                });
+            }
+
+            scoreDisplay.textContent = `Score: ${score}`;
+            modeDisplay.textContent = `Mode: ${aiMode ? 'AI' : 'Manual'}`;
+        }
+
+        // Check if a piece collides with the board or boundaries
+        function collide(piece, board) {
+            for (let y = 0; y < piece.shape.length; y++) {
+                for (let x = 0; x < piece.shape[y].length; x++) {
+                    if (piece.shape[y][x]) {
+                        const newY = piece.y + y;
+                        const newX = piece.x + x;
+                        if (newY >= rows || newX < 0 || newX >= cols || (board[newY] && board[newY][newX])) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+
+        // Move the current piece
+        function move(dx, dy) {
+            currentPiece.x += dx;
+            currentPiece.y += dy;
+            if (collide(currentPiece, board)) {
+                currentPiece.x -= dx;
+                currentPiece.y -= dy;
+                return false;
+            }
+            return true;
+        }
+
+        // Rotate the current piece
+        function rotate() {
+            const rotated = currentPiece.shape[0].map((_, index) =>
+                currentPiece.shape.map(row => row[index]).reverse()
+            );
+            const previousShape = currentPiece.shape;
+            currentPiece.shape = rotated;
+            if (collide(currentPiece, board)) {
+                currentPiece.shape = previousShape;
+            }
+        }
+
+        // Merge the current piece into the board
+        function merge() {
+            currentPiece.shape.forEach((row, dy) => {
+                row.forEach((value, dx) => {
+                    if (value) {
+                        board[currentPiece.y + dy][currentPiece.x + dx] = currentPiece.color;
+                    }
+                });
+            });
+
+            let linesCleared = 0;
+            for (let r = rows - 1; r >= 0; r--) {
+                if (board[r].every(cell => cell !== 0)) {
+                    board.splice(r, 1);
+                    board.unshift(Array(cols).fill(0));
+                    linesCleared++;
+                }
+            }
+            if (linesCleared > 0) {
+                score += linesCleared * 10;
+                dropInterval = Math.max(200, dropInterval - linesCleared * 50);
+            }
+
+            lastPieceIndex = tetrominoes.findIndex(shape =>
+                shape.every((row, i) => row.every((val, j) => val === currentPiece.shape[i][j]))
+            );
+            currentPiece = nextPiece;
+            nextPiece = getNextTetromino();
+            if (collide(currentPiece, board)) {
+                gameOver = true;
+            }
+        }
+
+        // Calculate the current height of the board
+        function getHeight(boardCopy) {
+            for (let r = 0; r < rows; r++) {
+                if (boardCopy[r].some(cell => cell !== 0)) {
+                    return rows - r;
+                }
+            }
+            return 0;
+        }
+
+        // Generate a random tetromino with a bright color
+        function randomTetromino() {
+            let availableShapes = tetrominoes.filter((_, i) => i !== lastPieceIndex);
+            let shape = availableShapes[Math.floor(Math.random() * availableShapes.length)];
+            usedHatetrisLast = false; // Reset flag since this is random
+            return {
+                shape: shape.map(row => [...row]),
+                x: Math.floor(cols / 2) - Math.floor(shape[0].length / 2),
+                y: 0,
+                color: generateBrightColor()
+            };
+        }
+
+        // Generate the worst-case tetromino (HATETRIS) with a bright color
+        function worstCaseTetromino() {
+            let worstPiece = null;
+            let minWells = Infinity;
+
+            tetrominoes.forEach((shape, index) => {
+                if (index === lastPieceIndex) return;
+
+                for (let x = 0; x <= cols - shape[0].length; x++) {
+                    let boardCopy = board.map(row => [...row]);
+                    let piece = {
+                        shape: shape.map(row => [...row]),
+                        x: x,
+                        y: 0,
+                        color: generateBrightColor()
+                    };
+
+                    if (!collide(piece, boardCopy)) {
+                        let result = simulateDrop(piece, boardCopy);
+                        if (result.wells < minWells) {
+                            minWells = result.wells;
+                            worstPiece = { ...piece };
+                        }
+                    }
+                }
+            });
+
+            usedHatetrisLast = true; // Set flag since HATETRIS was used
+            return worstPiece || randomTetromino();
+        }
+
+        // Decide next tetromino with alternation
+        function getNextTetromino() {
+            const height = getHeight(board);
+            if (height >= rows / 2) { // Height condition met
+                if (usedHatetrisLast) {
+                    return randomTetromino(); // Use random after HATETRIS
+                } else {
+                    return worstCaseTetromino(); // Use HATETRIS if last was random
+                }
+            } else {
+                return randomTetromino(); // Default to random if height < half
+            }
+        }
+
+        // Count wells in the board
+        function countWells(boardCopy) {
+            let wells = 0;
+            for (let c = 0; c < cols; c++) {
+                for (let r = 0; r < rows; r++) {
+                    if (boardCopy[r][c] === 0) {
+                        let isWell = true;
+                        if (c > 0 && boardCopy[r][c - 1] === 0) isWell = false;
+                        if (c < cols - 1 && boardCopy[r][c + 1] === 0) isWell = false;
+                        if (isWell) wells++;
+                    }
+                }
+            }
+            return wells;
+        }
+
+        // Count holes in the board
+        function countHoles(boardCopy) {
+            let holes = 0;
+            for (let c = 0; c < cols; c++) {
+                let blockFound = false;
+                for (let r = 0; r < rows; r++) {
+                    if (boardCopy[r][c] !== 0) {
+                        blockFound = true;
+                    } else if (blockFound && boardCopy[r][c] === 0) {
+                        holes++;
+                    }
+                }
+            }
+            return holes;
+        }
+
+        // Calculate bumpiness of the board
+        function getBumpiness(boardCopy) {
+            let heights = [];
+            for (let c = 0; c < cols; c++) {
+                let height = 0;
+                for (let r = 0; r < rows; r++) {
+                    if (boardCopy[r][c] !== 0) {
+                        height = rows - r;
+                        break;
+                    }
+                }
+                heights.push(height);
+            }
+            let bumpiness = 0;
+            for (let i = 0; i < heights.length - 1; i++) {
+                bumpiness += Math.abs(heights[i] - heights[i + 1]);
+            }
+            return bumpiness;
+        }
+
+        // Simulate dropping a piece and evaluate the result
+        function simulateDrop(piece, boardCopy) {
+            let testPiece = { ...piece, y: piece.y, shape: piece.shape.map(row => [...row]) };
+            while (!collide(testPiece, boardCopy)) {
+                testPiece.y++;
+            }
+            testPiece.y--;
+
+            testPiece.shape.forEach((row, dy) => {
+                row.forEach((value, dx) => {
+                    if (value) {
+                        boardCopy[testPiece.y + dy][testPiece.x + dx] = testPiece.color;
+                    }
+                });
+            });
+
+            let linesCleared = 0;
+            for (let r = rows - 1; r >= 0; r--) {
+                if (boardCopy[r].every(cell => cell !== 0)) {
+                    boardCopy.splice(r, 1);
+                    boardCopy.unshift(Array(cols).fill(0));
+                    linesCleared++;
+                }
+            }
+
+            return {
+                wells: countWells(boardCopy),
+                height: getHeight(boardCopy),
+                holes: countHoles(boardCopy),
+                bumpiness: getBumpiness(boardCopy),
+                linesCleared
+            };
+        }
+
+        // AI auto-play logic with increased speed
+        function aiPlay() {
+            if (!aiMode || gameOver || !currentPiece) return;
+
+            aiMoveCounter += 16;
+            if (aiMoveCounter < 88) return; // 88ms per step
+            aiMoveCounter = 0;
+
+            if (aiStep === 'rotate') {
+                let bestX = currentPiece.x;
+                let bestShape = currentPiece.shape.map(row => [...row]);
+                let bestScore = -Infinity;
+
+                for (let rotations = 0; rotations < 4; rotations++) {
+                    for (let x = 0; x <= cols - currentPiece.shape[0].length; x++) {
+                        let boardCopy = board.map(row => [...row]);
+                        let testPiece = { ...currentPiece, x: x, y: 0, shape: currentPiece.shape.map(row => [...row]) };
+
+                        let result = simulateDrop(testPiece, boardCopy);
+                        let score = (
+                            result.linesCleared * 500 -
+                            result.height * 20 -
+                            result.holes * 100 -
+                            result.bumpiness * 30 -
+                            result.wells * 50
+                        );
+
+                        if (score > bestScore) {
+                            bestScore = score;
+                            bestX = x;
+                            bestShape = testPiece.shape.map(row => [...row]);
+                        }
+                    }
+                    rotate();
+                }
+
+                currentPiece.shape = bestShape;
+                currentPiece.targetX = bestX; // Store target X for movement
+                aiStep = 'move';
+            } else if (aiStep === 'move') {
+                let currentX = currentPiece.x;
+                if (currentX < currentPiece.targetX) move(1, 0);
+                else if (currentX > currentPiece.targetX) move(-1, 0);
+                else aiStep = 'drop';
+            } else if (aiStep === 'drop') {
+                if (!move(0, 1)) {
+                    merge();
+                    aiStep = 'rotate';
+                }
+            }
+        }
+
+        // Game update loop
+        function update(time = 0) {
+            if (gameOver) {
+                draw();
+                return;
+            }
+
+            const deltaTime = time - lastTime;
+            lastTime = time;
+
+            dropCounter += deltaTime;
+            if (dropCounter > dropInterval) {
+                if (!aiMode && currentPiece) {
+                    if (!move(0, 1)) {
+                        merge();
+                    }
+                }
+                dropCounter = 0;
+            }
+
+            if (aiMode) aiPlay();
+
+            draw();
+            requestAnimationFrame(update);
+        }
+
+        // Toggle AI mode with button
+        autoPlayButton.addEventListener('click', () => {
+            if (gameOver) return;
+            aiMode = !aiMode;
+            aiMoveCounter = 0;
+            aiStep = 'rotate';
+        });
+
+        // Control buttons for manual mode
+        moveLeftButton.addEventListener('click', (e) => {
+            e.preventDefault(); // Prevent scrolling on mobile
+            if (!gameOver && !aiMode && currentPiece) move(-1, 0);
+        });
+
+        moveRightButton.addEventListener('click', (e) => {
+            e.preventDefault(); // Prevent scrolling on mobile
+            if (!gameOver && !aiMode && currentPiece) move(1, 0);
+        });
+
+        moveDownButton.addEventListener('click', (e) => {
+            e.preventDefault(); // Prevent scrolling on mobile
+            if (!gameOver && !aiMode && currentPiece) move(0, 1);
+        });
+
+        rotateButton.addEventListener('click', (e) => {
+            e.preventDefault(); // Prevent scrolling on mobile
+            if (!gameOver && !aiMode && currentPiece) rotate();
+        });
+
+        // Keyboard controls for manual mode
+        document.addEventListener('keydown', event => {
+            if (gameOver || aiMode || !currentPiece) return;
+
+            switch (event.key) {
+                case 'ArrowLeft':
+                    move(-1, 0);
+                    break;
+                case 'ArrowRight':
+                    move(1, 0);
+                    break;
+                case 'ArrowDown':
+                    move(0, 1);
+                    break;
+                case 'ArrowUp':
+                    rotate();
+                    break;
+            }
+        });
+
+        // Touch controls for mobile (canvas)
+        canvas.addEventListener('touchstart', (e) => {
+            if (gameOver || aiMode || !currentPiece) return;
+            e.preventDefault();
+            const touchX = e.touches[0].clientX - canvas.getBoundingClientRect().left;
+            const touchY = e.touches[0].clientY - canvas.getBoundingClientRect().top;
+
+            if (touchX < canvas.width / 3) move(-1, 0); // Left
+            else if (touchX > 2 * canvas.width / 3) move(1, 0); // Right
+            else if (touchY > canvas.height / 2) move(0, 1); // Down
+            else rotate(); // Tap upper half to rotate
+        });
+
+        // Initialize game
+        currentPiece = randomTetromino();
+        nextPiece = randomTetromino();
+        update();
+    </script>
+</body>
+</html>
